@@ -1,8 +1,18 @@
 import numpy as np
 from sklearn.metrics import f1_score
+import math
 
-spdot = tf.sparse_tensor_dense_matmul
-dot = tf.matmul
+import torch
+
+from torch.nn.parameter import Parameter
+from torch.nn.modules.module import Module
+import torch.nn as nn
+import torch.nn.functional as F
+
+# spdot = tf.sparse_tensor_dense_matmul
+# dot = tf.matmul
+spdot = torch.sparse.mm
+dot = torch.matmul
 
 
 # TODO: convert this to sparse torch tensors
@@ -12,15 +22,51 @@ def sparse_dropout(x, keep_prob, noise_shape):
     random_tensor += tf.random_uniform(noise_shape)
     dropout_mask = tf.cast(tf.floor(random_tensor), dtype=tf.bool)
     pre_out = tf.sparse_retain(x, dropout_mask)
-    return pre_out * (1./keep_prob)
+    return pre_out * (1. / keep_prob)
+
+
+class GraphConvolution(Module):
+    """
+    Simple GCN layer, similar to https://arxiv.org/abs/1609.02907
+    """
+
+    def __init__(self, in_features, out_features, bias=True):
+        super(GraphConvolution, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = Parameter(torch.FloatTensor(in_features, out_features))
+        if bias:
+            self.bias = Parameter(torch.FloatTensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, adj, add_bias=True):
+        support = torch.mm(input, self.weight)
+        output = torch.spmm(adj, support)
+        if self.bias is not None and add_bias:
+            return output + self.bias
+        else:
+            return output
+
+    def __repr__(self):
+        return self.__class__.__name__ + ' (' \
+               + str(self.in_features) + ' -> ' \
+               + str(self.out_features) + ')'
 
 
 # TODO
-class GCN:
+class GCN(nn.Module):
     def __init__(self, sizes, An, X_obs, name="", with_relu=True, params_dict={'dropout': 0.5}, gpu_id=0,
-                 seed=-1):
+                 seed=-1, bias=True):
         """
-        Create a Graph Convolutional Network model in Tensorflow with one hidden layer.
+        Create a Graph Convolutional Network model in PyTorch with one hidden layer.
         Parameters
         ----------
         sizes: list
@@ -41,138 +87,71 @@ class GCN:
         seed: int, defualt: -1
             Random initialization for reproducibility. Will be ignored if it is -1.
         """
-
-        self.graph = tf.Graph()
+        super(GCN, self).__init__()
         if seed > -1:
-            tf.set_random_seed(seed)
+            torch.manual_seed(seed)
 
         if An.format != "csr":
             An = An.tocsr()
 
-        with self.graph.as_default():
+        # need to initialize, node_ids, node_labels, training
+        #need to set the device, cpu or gpu
 
-            with tf.variable_scope(name) as scope:
-                w_init = slim.xavier_initializer
-                self.name = name
-                self.n_classes = sizes[1]
+        self.name = name
 
-                self.dropout = params_dict['dropout'] if 'dropout' in params_dict else 0.
-                if not with_relu:
-                    self.dropout = 0
+        self.n_hidden, self.n_classes = sizes
 
-                self.learning_rate = params_dict['learning_rate'] if 'learning_rate' in params_dict else 0.01
+        self.dropout = params_dict['dropout'] if 'dropout' in params_dict else 0.
+        if not with_relu:
+            self.dropout = 0
 
-                self.weight_decay = params_dict['weight_decay'] if 'weight_decay' in params_dict else 5e-4
-                self.N, self.D = X_obs.shape
+        self.learning_rate = params_dict['learning_rate'] if 'learning_rate' in params_dict else 0.01
 
-                self.node_ids = tf.placeholder(tf.int32, [None], 'node_ids')
-                self.node_labels = tf.placeholder(tf.int32, [None, sizes[1]], 'node_labels')
+        self.weight_decay = params_dict['weight_decay'] if 'weight_decay' in params_dict else 5e-4
+        self.N, self.D = X_obs.shape
 
-                # bool placeholder to turn on dropout during training
-                self.training = tf.placeholder_with_default(False, shape=())
+        self.gc1 = GraphConvolution(self.D, self.n_hidden)
+        self.gc2 = GraphConvolution(self.n_hidden, self.n_classes)
 
-                self.An = tf.SparseTensor(np.array(An.nonzero()).T, An[An.nonzero()].A1, An.shape)
-                self.An = tf.cast(self.An, tf.float32)
-                self.X_sparse = tf.SparseTensor(np.array(X_obs.nonzero()).T, X_obs[X_obs.nonzero()].A1, X_obs.shape)
-                self.X_dropout = sparse_dropout(self.X_sparse, 1 - self.dropout,
-                                                (int(self.X_sparse.values.get_shape()[0]),))
-                # only use drop-out during training
-                self.X_comp = tf.cond(self.training,
-                                      lambda: self.X_dropout,
-                                      lambda: self.X_sparse) if self.dropout > 0. else self.X_sparse
+        self.An = torch.sparse.FloatTensor(np.array(An.nonzero()).T, An[An.nonzero()].A1, An.shape).to_dense()
+        self.X_sparse = torch.sparse.FloatTensor(np.array(X_obs.nonzero()).T, X_obs[X_obs.nonzero()].A1,
+                                                 X_obs.shape).to_dense()
+        self.X_dropout = sparse_dropout(self.X_sparse, 1 - self.dropout,
+                                        (int(X_obs.shape[0]),))
+        # only use drop-out during training
+        self.X_comp = self.X_dropout if self.dropout > 0. and self.training else self.X_sparse
 
-                self.W1 = slim.variable('W1', [self.D, sizes[0]], tf.float32, initializer=w_init())
-                self.b1 = slim.variable('b1', dtype=tf.float32, initializer=tf.zeros(sizes[0]))
+        self.h1 = self.gc1(self.An, self.X_comp)
 
-                self.h1 = spdot(self.An, spdot(self.X_comp, self.W1))
+        if with_relu:
+            self.h1 = F.relu(self.h1)
 
-                if with_relu:
-                    self.h1 = tf.nn.relu(self.h1 + self.b1)
+        self.h1_dropout = F.dropout(self.h1, 1 - self.dropout, training=self.training)
 
-                self.h1_dropout = tf.nn.dropout(self.h1, 1 - self.dropout)
+        self.h1_comp = self.h1_dropout if self.dropout > 0. and self.training else self.h1
 
+        self.logits = self.gc2(self.An, self.h1_comp, False)
 
-                self.h1_comp = tf.cond(self.training,
-                                       lambda: self.h1_dropout,
-                                       lambda: self.h1) if self.dropout > 0. else self.h1
+        if with_relu:
+            self.logits += self.gc2.bias
+        self.logits_gather = torch.gather(self.logits, self.node_ids)
 
-                self.W2 = slim.variable('W2', [sizes[0], sizes[1]], tf.float32, initializer=w_init())
-                self.b2 = slim.variable('b2', dtype=tf.float32, initializer=tf.zeros(sizes[1]))
+        self.predictions = F.softmax(self.logits_gather)
 
-                self.logits = spdot(self.An, dot(self.h1_comp, self.W2))
-                if with_relu:
-                    self.logits += self.b2
-                self.logits_gather = tf.gather(self.logits, self.node_ids)
+        self.loss_per_node = F.softmax_cross_entropy_with_logits(logits=self.logits_gather,
+                                                                 labels=self.node_labels)
+        self.loss = np.mean(self.loss_per_node)
 
-                self.predictions = tf.nn.softmax(self.logits_gather)
+        # weight decay only on the first layer, to match the original implementation
+        if with_relu:
+            self.loss += self.weight_decay * sum([F.l2_loss(v) for v in [self.gc1.weight, self.gc1.bias]])
 
-                self.loss_per_node = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits_gather,
-                                                                             labels=self.node_labels)
-                self.loss = tf.reduce_mean(self.loss_per_node)
+        var_l = [self.gc1.weight, self.gc2.weight]
+        if with_relu:
+            var_l.extend([self.gc1.bias, self.gc2.bias])
+        self.train_op = torch.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss,
+                                                                                             var_list=var_l)
 
-                # weight decay only on the first layer, to match the original implementation
-                if with_relu:
-                    self.loss += self.weight_decay * tf.add_n([tf.nn.l2_loss(v) for v in [self.W1, self.b1]])
-
-                var_l = [self.W1, self.W2]
-                if with_relu:
-                    var_l.extend([self.b1, self.b2])
-                self.train_op = tf.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss,
-                                                                                                  var_list=var_l)
-
-                self.varlist = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=self.name)
-                self.local_init_op = tf.variables_initializer(self.varlist)
-
-                if gpu_id is None:
-                    config = tf.ConfigProto(
-                        device_count={'GPU': 0}
-                    )
-                else:
-                    gpu_options = tf.GPUOptions(visible_device_list='{}'.format(gpu_id), allow_growth=True)
-                    config = tf.ConfigProto(gpu_options=gpu_options)
-
-                self.session = tf.InteractiveSession(config=config)
-                self.init_op = tf.global_variables_initializer()
-                self.session.run(self.init_op)
-
-    def convert_varname(self, vname, to_namespace=None):
-        """
-        Utility function that converts variable names to the input namespace.
-        Parameters
-        ----------
-        vname: string
-            The variable name.
-        to_namespace: string
-            The target namespace.
-        Returns
-        -------
-        """
-        namespace = vname.split("/")[0]
-        if to_namespace is None:
-            to_namespace = self.name
-        return vname.replace(namespace, to_namespace)
-
-    def set_variables(self, var_dict):
-        """
-        Set the model's variables to those provided in var_dict. This is e.g. used to restore the best seen parameters
-        after training with patience.
-        Parameters
-        ----------
-        var_dict: dict
-            Dictionary of the form {var_name: var_value} to assign the variables in the model.
-        Returns
-        -------
-        None.
-        """
-
-        with self.graph.as_default():
-            if not hasattr(self, 'assign_placeholders'):
-                self.assign_placeholders = {v.name: tf.placeholder(v.dtype, shape=v.get_shape()) for v in self.varlist}
-                self.assign_ops = {v.name: tf.assign(v, self.assign_placeholders[v.name])
-                                   for v in self.varlist}
-            to_namespace = list(var_dict.keys())[0].split("/")[0]
-            self.session.run(list(self.assign_ops.values()), feed_dict = {val: var_dict[self.convert_varname(key, to_namespace)]
-                                                                     for key, val in self.assign_placeholders.items()})
 
     def train(self, split_train, split_val, Z_obs, patience=30, n_iters=200, print_info=True):
         """
@@ -195,8 +174,6 @@ class GCN:
         None.
         """
 
-        varlist = self.varlist
-        self.session.run(self.local_init_op)
         early_stopping = patience
 
         best_performance = 0
