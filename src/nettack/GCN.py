@@ -113,7 +113,10 @@ class GCN(nn.Module):
         self.gc2 = GraphConvolution(self.n_hidden, self.n_classes, bias)
 
         self.An = An
-        self.X_sparse = X_obs.to_sparse()
+        if not X_obs.is_sparse:
+            self.X_sparse = X_obs.to_sparse()
+        else:
+            self.X_sparse = X_obs
         
         self.training = False
         self.with_relu = False
