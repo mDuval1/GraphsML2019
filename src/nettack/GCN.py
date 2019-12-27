@@ -61,7 +61,7 @@ class GraphConvolution(Module):
                + str(self.out_features) + ')'
 
 
-# TODO
+# TODO: review if init is ok
 class GCN(nn.Module):
     def __init__(self, sizes, An, X_obs, name="", with_relu=True, params_dict={'dropout': 0.5}, gpu_id=0,
                  seed=-1, bias=True):
@@ -94,7 +94,6 @@ class GCN(nn.Module):
         if An.format != "csr":
             An = An.tocsr()
 
-        # need to initialize, node_ids, node_labels, training
         #need to set the device, cpu or gpu
 
         self.name = name
@@ -110,49 +109,50 @@ class GCN(nn.Module):
         self.weight_decay = params_dict['weight_decay'] if 'weight_decay' in params_dict else 5e-4
         self.N, self.D = X_obs.shape
 
-        self.gc1 = GraphConvolution(self.D, self.n_hidden)
-        self.gc2 = GraphConvolution(self.n_hidden, self.n_classes)
+        self.gc1 = GraphConvolution(self.D, self.n_hidden, bias)
+        self.gc2 = GraphConvolution(self.n_hidden, self.n_classes, bias)
 
         self.An = torch.sparse.FloatTensor(np.array(An.nonzero()).T, An[An.nonzero()].A1, An.shape).to_dense()
         self.X_sparse = torch.sparse.FloatTensor(np.array(X_obs.nonzero()).T, X_obs[X_obs.nonzero()].A1,
                                                  X_obs.shape).to_dense()
-        self.X_dropout = sparse_dropout(self.X_sparse, 1 - self.dropout,
-                                        (int(X_obs.shape[0]),))
+
+    #TODO: review if forward pass is ok, maybe don't compute the loss here
+    def forward(self, node_ids, node_labels, training, with_relu=True):
         # only use drop-out during training
-        self.X_comp = self.X_dropout if self.dropout > 0. and self.training else self.X_sparse
+        self.X_dropout = sparse_dropout(self.X_sparse, 1 - self.dropout,
+                                        (int(self.X_sparse.shape[0]),))
+        self.X_comp = self.X_dropout if self.dropout > 0. and training else self.X_sparse
 
         self.h1 = self.gc1(self.An, self.X_comp)
 
         if with_relu:
             self.h1 = F.relu(self.h1)
 
-        self.h1_dropout = F.dropout(self.h1, 1 - self.dropout, training=self.training)
-
-        self.h1_comp = self.h1_dropout if self.dropout > 0. and self.training else self.h1
+        self.h1_dropout = F.dropout(self.h1, 1 - self.dropout, training=training)
+        self.h1_comp = self.h1_dropout if self.dropout > 0. and training else self.h1
 
         self.logits = self.gc2(self.An, self.h1_comp, False)
 
         if with_relu:
             self.logits += self.gc2.bias
-        self.logits_gather = torch.gather(self.logits, self.node_ids)
 
+        self.logits_gather = torch.gather(self.logits, node_ids)
         self.predictions = F.softmax(self.logits_gather)
 
         self.loss_per_node = F.softmax_cross_entropy_with_logits(logits=self.logits_gather,
-                                                                 labels=self.node_labels)
+                                                                 labels=node_labels)
         self.loss = np.mean(self.loss_per_node)
 
         # weight decay only on the first layer, to match the original implementation
+        # regularisation
         if with_relu:
             self.loss += self.weight_decay * sum([F.l2_loss(v) for v in [self.gc1.weight, self.gc1.bias]])
 
         var_l = [self.gc1.weight, self.gc2.weight]
         if with_relu:
             var_l.extend([self.gc1.bias, self.gc2.bias])
-        self.train_op = torch.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss,
-                                                                                             var_list=var_l)
 
-
+    #TODO: convert the training phase to PyTorch
     def train(self, split_train, split_val, Z_obs, patience=30, n_iters=200, print_info=True):
         """
         Train the GCN model on the provided data.
@@ -177,14 +177,13 @@ class GCN(nn.Module):
         early_stopping = patience
 
         best_performance = 0
-        patience = early_stopping
 
         feed = {self.node_ids: split_train,
                 self.node_labels: Z_obs[split_train]}
         if hasattr(self, 'training'):
             feed[self.training] = True
         for it in range(n_iters):
-            _loss, _ = self.session.run([self.loss, self.train_op], feed)
+            torch.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss, var_list=var_l)
             f1_micro, f1_macro = eval_class(split_val, self, np.argmax(Z_obs, 1))
             perf_sum = f1_micro + f1_macro
             if perf_sum > best_performance:
@@ -201,7 +200,7 @@ class GCN(nn.Module):
         # Put the best observed parameters back into the model
         self.set_variables(var_dump_best)
 
-
+# TODO: I think the test_pred line is not correct
 def eval_class(ids_to_eval, model, z_obs):
     """
     Evaluate the model's classification performance.
@@ -217,7 +216,7 @@ def eval_class(ids_to_eval, model, z_obs):
     -------
     [f1_micro, f1_macro] scores
     """
-    test_pred = model.predictions.eval(session=model.session, feed_dict={model.node_ids: ids_to_eval}).argmax(1)
+    test_pred = model.predictions.gather(ids_to_eval).argmax(1)
     test_real = z_obs[ids_to_eval]
 
     return f1_score(test_real, test_pred, average='micro'), f1_score(test_real, test_pred, average='macro')
