@@ -243,6 +243,8 @@ class GCN_Model():
                 break
                 pbar.close()
             pbar.update(1)
+            if it == n_iters-1:
+                pbar.close()
         if print_info:
             print('converged after {} iterations'.format(it - patience))
         # self.set_variables(var_dump_best)

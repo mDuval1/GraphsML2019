@@ -10,8 +10,9 @@ Technical University of Munich
 
 import numpy as np
 import scipy.sparse as sp
-from nettack import utils
 from numba import jit
+
+from .utils import preprocess_graph
 
 class Nettack:
     """
@@ -29,7 +30,7 @@ class Nettack:
         self.adj_no_selfloops.setdiag(0)
         self.adj_orig = self.adj.copy().tolil()
         self.u = u  # the node being attacked
-        self.adj_preprocessed = utils.preprocess_graph(self.adj).tolil()
+        self.adj_preprocessed = preprocess_graph(self.adj).tolil()
         # Number of nodes
         self.N = adj.shape[0]
 
@@ -43,7 +44,7 @@ class Nettack:
         # GCN weight matrices
         self.W1 = W1
         self.W2 = W2
-        self.W = sp.csr_matrix(self.W1.dot(self.W2))
+        self.W = sp.csr_matrix((W1 @ W2).detach())
 
         self.cooc_matrix = self.X_obs.T.dot(self.X_obs).tolil()
         self.cooc_constraint = None
@@ -418,7 +419,7 @@ class Nettack:
                 # perform edge perturbation
 
                 self.adj[tuple(best_edge)] = self.adj[tuple(best_edge[::-1])] = 1 - self.adj[tuple(best_edge)]
-                self.adj_preprocessed = utils.preprocess_graph(self.adj)
+                self.adj_preprocessed = preprocess_graph(self.adj)
 
                 self.structure_perturbations.append(tuple(best_edge))
                 self.feature_perturbations.append(())
