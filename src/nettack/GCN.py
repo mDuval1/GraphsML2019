@@ -11,8 +11,6 @@ from torch.nn.modules.module import Module
 import torch.nn as nn
 import torch.nn.functional as F
 
-# spdot = tf.sparse_tensor_dense_matmul
-# dot = tf.matmul
 spdot = torch.sparse.mm
 dot = torch.matmul
 
@@ -95,7 +93,7 @@ class GCN(nn.Module):
         if not An.is_sparse:
             An = An.to_sparse()
 
-        #need to set the device, cpu or gpu
+        # need to set the device, cpu or gpu
         self.name = name
 
         self.n_hidden, self.n_classes = sizes
@@ -117,7 +115,7 @@ class GCN(nn.Module):
             self.X_sparse = X_obs.to_sparse()
         else:
             self.X_sparse = X_obs
-        
+
         self.training = False
         self.with_relu = False
 
@@ -127,10 +125,10 @@ class GCN(nn.Module):
         their logits returned.
         """
         # only use drop-out during training
-        
+
         if self.dropout > 0 and self.training:
             self.X_comp = sparse_dropout(self.X_sparse, 1 - self.dropout,
-                                        (int(self.X_sparse.shape[0]),))
+                                         (int(self.X_sparse.shape[0]),))
         else:
             self.X_comp = self.X_sparse
 
@@ -159,24 +157,25 @@ class GCN_Model():
     def __init__(self, gcn, lr=1e-3):
         self.gcn = gcn
         self.optimizer = torch.optim.Adam(self.gcn.parameters(), lr=lr)
-        
-        
-    def _compute_loss_and_backprop(self, node_ids, node_labels):
+
+    def _compute_loss_and_backprop(self, node_ids, node_labels, backward=True):
         """
         Makes a forward and backward pass for node_ids.
         """
-        self.gcn.training = True
+        self.gcn.training = backward
         logit_nodes = self.gcn(node_ids)
         self.predictions = F.softmax(logit_nodes, dim=1)
         self.loss_per_node = F.cross_entropy(input=logit_nodes, target=node_labels, reduction='none')
         self.loss = self.loss_per_node.mean()
         if self.gcn.with_relu:
-            self.loss += self.gcn.weight_decay * sum([(x**2).sum()
+            self.loss += self.gcn.weight_decay * sum([(x ** 2).sum()
                                                       for x in [self.gcn.gc1.weight, self.gcn.gc1.bias]])
         self.optimizer.zero_grad()
-        self.loss.backward()
-        self.optimizer.step()
-        
+        if backward:
+            self.loss.backward()
+            self.optimizer.step()
+        return self.loss
+
     def _predict(self, node_ids, train=False):
         """
         Used at the moment for the function eval_class. Can be used to produce
@@ -190,7 +189,7 @@ class GCN_Model():
             self.gcn.training = True
             logit_nodes = self.gcn(node_ids)
         return F.softmax(logit_nodes, dim=1)
-        
+
     def train(self, split_train, split_val, Z_obs, patience=30, n_iters=200, print_info=True):
         """
         Train the GCN model on the provided data.
@@ -215,39 +214,39 @@ class GCN_Model():
         early_stopping = patience
 
         best_performance = 0
-        
+
         train_nodes = torch.tensor(split_train)
         train_labels = Z_obs[train_nodes]
         val_nodes = torch.tensor(split_val)
         val_labels = Z_obs[val_nodes]
-        
-        # feed = {self.node_ids: split_train,
-        # self.node_labels: Z_obs[split_train]}
-        # if hasattr(self, 'training'):
-        #     feed[self.training] = True
 
         pbar = tqdm.tqdm_notebook(disable=(not print_info))
         for it in range(n_iters):
-            # torch.train.AdamOptimizer(learning_rate=self.learning_rate).minimize(self.loss, var_list=var_l)
-            self._compute_loss_and_backprop(train_nodes, train_labels)
+            print("Training loss : {}".format(self._compute_loss_and_backprop(train_nodes, train_labels)))
+            print("Validation loss : {}".format(self._compute_loss_and_backprop(val_nodes, val_labels, False)))
             f1_micro, f1_macro = eval_class(split_val, self, Z_obs)
             perf_sum = f1_micro + f1_macro
+            f1_micro_train, f1_macro_train = eval_class(split_train, self, Z_obs)
+            perf_sum_train = f1_micro_train + f1_macro_train
+            print("Training metric : {}".format(perf_sum_train))
+            print("Validation metric : {}".format(perf_sum))
+
             if perf_sum > best_performance:
                 best_performance = perf_sum
+                best_it = it
                 patience = early_stopping
-                # var_dump_best = {v.name: v.eval(self.session) for v in varlist}
                 print(f'New best performance : {perf_sum:.3f}')
             else:
                 patience -= 1
             if it > early_stopping and patience <= 0:
-                break
                 pbar.close()
+                break
             pbar.update(1)
-            if it == n_iters-1:
+            if it == n_iters - 1:
                 pbar.close()
         if print_info:
-            print('converged after {} iterations'.format(it - patience))
-        # self.set_variables(var_dump_best)
+            print('converged after {} iterations'.format(best_it))
+
 
 
 def eval_class(ids_to_eval, model, z_obs):
@@ -257,7 +256,7 @@ def eval_class(ids_to_eval, model, z_obs):
     ----------
     ids_to_eval: np.array
         The indices of the nodes whose predictions will be evaluated.
-    model: GCN
+    model: GCN_model
         The model to evaluate.
     z_obs: 1d np.array
         The labels of the nodes in ids_to_eval
