@@ -14,7 +14,9 @@ is under-studied.  This project involves (1) implementing some of the GNN attack
 (2) do at least one of the following:
 
 develop new or more efficient attacks
+
 develop new defence or training algorithms that are robust against the above attacks
+
 apply / develop neural network verification techniques for GNNs and handle the unique challenges
 involving graph structure
 
