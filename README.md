@@ -34,4 +34,4 @@ involving graph structure
 
 
 
-Implementation of Nettack : https://github.com/danielzuegner/nettack/blob/master in PyTorch
+Implementation of Nettack : https://github.com/danielzuegner/nettack in PyTorch

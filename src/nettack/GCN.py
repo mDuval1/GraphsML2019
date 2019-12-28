@@ -225,8 +225,10 @@ class GCN_Model():
             train_loss = self._compute_loss_and_backprop(train_nodes, train_labels)
             val_loss = self._compute_loss_and_backprop(val_nodes, val_labels, False)
             if print_info:
+                print("Iteration {} : ".format(it))
                 print("Training loss : {}".format(train_loss))
                 print("Validation loss : {}".format(val_loss))
+
             f1_micro, f1_macro = eval_class(split_val, self, Z_obs)
             perf_sum = f1_micro + f1_macro
             f1_micro_train, f1_macro_train = eval_class(split_train, self, Z_obs)
@@ -245,12 +247,12 @@ class GCN_Model():
                 patience -= 1
             if it > early_stopping and patience <= 0:
                 pbar.close()
-                print('converged after {} iterations'.format(it))
+                print('converged after {} iterations'.format(best_it))
                 break
             pbar.update(1)
             if it == n_iters - 1:
                 pbar.close()
-                print('converged after {} iterations'.format(it))
+                print('converged after {} iterations'.format(best_it))
 
 
 
