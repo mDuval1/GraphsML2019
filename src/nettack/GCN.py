@@ -117,7 +117,7 @@ class GCN(nn.Module):
             self.X_sparse = X_obs
 
         self.training = False
-        self.with_relu = False
+        self.with_relu = with_relu
 
     def forward(self, node_ids):
         """
@@ -222,30 +222,35 @@ class GCN_Model():
 
         pbar = tqdm.tqdm_notebook(disable=(not print_info))
         for it in range(n_iters):
-            print("Training loss : {}".format(self._compute_loss_and_backprop(train_nodes, train_labels)))
-            print("Validation loss : {}".format(self._compute_loss_and_backprop(val_nodes, val_labels, False)))
+            train_loss = self._compute_loss_and_backprop(train_nodes, train_labels)
+            val_loss = self._compute_loss_and_backprop(val_nodes, val_labels, False)
+            if print_info:
+                print("Training loss : {}".format(train_loss))
+                print("Validation loss : {}".format(val_loss))
             f1_micro, f1_macro = eval_class(split_val, self, Z_obs)
             perf_sum = f1_micro + f1_macro
             f1_micro_train, f1_macro_train = eval_class(split_train, self, Z_obs)
             perf_sum_train = f1_micro_train + f1_macro_train
-            print("Training metric : {}".format(perf_sum_train))
-            print("Validation metric : {}".format(perf_sum))
+            if print_info:
+                print("Training metric : {}".format(perf_sum_train))
+                print("Validation metric : {}".format(perf_sum))
 
             if perf_sum > best_performance:
                 best_performance = perf_sum
                 best_it = it
                 patience = early_stopping
-                print(f'New best performance : {perf_sum:.3f}')
+                if print_info:
+                    print(f'New best performance : {perf_sum:.3f}')
             else:
                 patience -= 1
             if it > early_stopping and patience <= 0:
                 pbar.close()
+                print('converged after {} iterations'.format(it))
                 break
             pbar.update(1)
             if it == n_iters - 1:
                 pbar.close()
-        if print_info:
-            print('converged after {} iterations'.format(best_it))
+                print('converged after {} iterations'.format(it))
 
 
 
