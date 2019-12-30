@@ -1,4 +1,3 @@
-import numpy as np
 import tqdm
 import sklearn
 import sklearn.metrics
@@ -7,7 +6,6 @@ import math
 import torch
 
 from torch.nn.parameter import Parameter
-from torch.nn.modules.module import Module
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -62,7 +60,8 @@ class GraphConvolution(nn.Module):
 
 
 class GCN(nn.Module):
-    def __init__(self, sizes, An, X_obs, name="", with_relu=True, params_dict={}, gpu_id=0,
+    #TODO: set the device, GPU/CPU
+    def __init__(self, sizes, An, X_obs, name="", with_relu=True, params_dict={},
                  seed=-1, bias=True):
         """
         Create a Graph Convolutional Network model in PyTorch with one hidden layer.
@@ -93,7 +92,6 @@ class GCN(nn.Module):
         if not An.is_sparse:
             An = An.to_sparse()
 
-        # need to set the device, cpu or gpu
         self.name = name
 
         self.n_hidden, self.n_classes = sizes
@@ -148,15 +146,12 @@ class GCN(nn.Module):
         logits_gather = self.logits[node_ids]
         return logits_gather
 
-        # var_l = [self.gc1.weight, self.gc2.weight]
-        # if with_relu:
-        #     var_l.extend([self.gc1.bias, self.gc2.bias])
-
 
 class GCN_Model():
-    def __init__(self, gcn, lr=1e-3):
+    def __init__(self, gcn, lr=1e-3, path="models/"):
         self.gcn = gcn
         self.optimizer = torch.optim.Adam(self.gcn.parameters(), lr=lr)
+        self.path = path
 
     def _compute_loss_and_backprop(self, node_ids, node_labels, backward=True):
         """
@@ -181,6 +176,7 @@ class GCN_Model():
         Used at the moment for the function eval_class. Can be used to produce
         only prediction probabilities.
         """
+        self.gcn.load_state_dict(torch.load(self.path + "weights.pth"))
         if not train:
             self.gcn.training = False
             with torch.no_grad():
@@ -207,6 +203,7 @@ class GCN_Model():
         n_iters: int, default: 200
             Maximum number of iterations (usually we hit the patience limit earlier)
         print_info: bool, default: True
+        path: string, path to the folder where the weights of the model are to be saved
         Returns
         -------
         None.
@@ -241,6 +238,7 @@ class GCN_Model():
                 best_performance = perf_sum
                 best_it = it
                 patience = early_stopping
+                torch.save(self.gcn.state_dict(), self.path + "weights.pth")
                 if print_info:
                     print(f'New best performance : {perf_sum:.3f}')
             else:
@@ -253,7 +251,6 @@ class GCN_Model():
             if it == n_iters - 1:
                 pbar.close()
                 print('converged after {} iterations'.format(best_it))
-
 
 
 def eval_class(ids_to_eval, model, z_obs):
