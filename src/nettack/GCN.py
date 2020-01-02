@@ -171,12 +171,13 @@ class GCN_Model():
             self.optimizer.step()
         return self.loss
 
-    def _predict(self, node_ids, train=False):
+    def _predict(self, node_ids, train=False, name=None):
         """
         Used at the moment for the function eval_class. Can be used to produce
         only prediction probabilities.
         """
-        self.gcn.load_state_dict(torch.load(self.path + "weights.pth"))
+        if name is not None:
+            self.gcn.load_state_dict(torch.load(self.path + f"{name}.pth"))
         if not train:
             self.gcn.training = False
             with torch.no_grad():
