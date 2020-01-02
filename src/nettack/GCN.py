@@ -235,6 +235,7 @@ class GCN_Model():
                 print("Validation metric : {}".format(perf_sum))
 
             if perf_sum > best_performance:
+                # Save current best model
                 best_performance = perf_sum
                 best_it = it
                 patience = early_stopping
