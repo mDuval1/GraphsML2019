@@ -158,9 +158,9 @@ class GCN_Model():
         Makes a forward and backward pass for node_ids.
         """
         self.gcn.training = backward
-        logit_nodes = self.gcn(node_ids)
-        self.predictions = F.softmax(logit_nodes, dim=1)
-        self.loss_per_node = F.cross_entropy(input=logit_nodes, target=node_labels, reduction='none')
+        self.logit_nodes = self.gcn(node_ids)
+        self.predictions = F.softmax(self.logit_nodes, dim=1)
+        self.loss_per_node = F.cross_entropy(input=self.logit_nodes, target=node_labels, reduction='none')
         self.loss = self.loss_per_node.mean()
         if self.gcn.with_relu:
             self.loss += self.gcn.weight_decay * sum([(x ** 2).sum()
