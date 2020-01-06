@@ -187,7 +187,7 @@ class GCN_Model():
             logit_nodes = self.gcn(node_ids)
         return F.softmax(logit_nodes, dim=1)
 
-    def train(self, split_train, split_val, Z_obs, patience=30, n_iters=200, print_info=True):
+    def train(self, split_train, split_val, Z_obs, patience=30, n_iters=200, print_info=True, debug=False):
         """
         Train the GCN model on the provided data.
         Parameters
@@ -218,11 +218,11 @@ class GCN_Model():
         val_nodes = torch.tensor(split_val)
         val_labels = Z_obs[val_nodes]
 
-        pbar = tqdm.tqdm_notebook(disable=(not print_info))
+        pbar = tqdm.tqdm_notebook(disable=(not debug))
         for it in range(n_iters):
             train_loss = self._compute_loss_and_backprop(train_nodes, train_labels)
             val_loss = self._compute_loss_and_backprop(val_nodes, val_labels, False)
-            if print_info:
+            if debug:
                 print("Iteration {} : ".format(it))
                 print("Training loss : {}".format(train_loss))
                 print("Validation loss : {}".format(val_loss))
@@ -231,7 +231,7 @@ class GCN_Model():
             perf_sum = f1_micro + f1_macro
             f1_micro_train, f1_macro_train = eval_class(split_train, self, Z_obs)
             perf_sum_train = f1_micro_train + f1_macro_train
-            if print_info:
+            if debug:
                 print("Training metric : {}".format(perf_sum_train))
                 print("Validation metric : {}".format(perf_sum))
 
@@ -241,18 +241,20 @@ class GCN_Model():
                 best_it = it
                 patience = early_stopping
                 torch.save(self.gcn.state_dict(), self.path + "weights.pth")
-                if print_info:
+                if debug:
                     print(f'New best performance : {perf_sum:.3f}')
             else:
                 patience -= 1
             if it > early_stopping and patience <= 0:
                 pbar.close()
-                print('converged after {} iterations'.format(best_it))
+                if print_info:
+                    print('converged after {} iterations'.format(best_it))
                 break
             pbar.update(1)
             if it == n_iters - 1:
                 pbar.close()
-                print('converged after {} iterations'.format(best_it))
+                if print_info:
+                    print('converged after {} iterations'.format(best_it))
 
 
 def eval_class(ids_to_eval, model, z_obs):

@@ -250,7 +250,7 @@ class Nettack:
                 additional_struct_scores = self.struct_score(a_hat_uv_additional, XW)
                 additional_influencers = poss_add_infl[np.argsort(additional_struct_scores)[-n_additional_attackers::]]
 
-                return influencer_nodes, additional_influencers
+                return influencer_nodes, additional_influencers.flatten()
             else:
                 return influencer_nodes
 
