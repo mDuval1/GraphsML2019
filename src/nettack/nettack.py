@@ -14,6 +14,7 @@ from numba import jit
 
 from .utils import preprocess_graph
 
+
 class Nettack:
     """
     Nettack class used for poisoning attacks on node classification models.
@@ -40,7 +41,7 @@ class Nettack:
         # Node labels
         self.z_obs = z_obs.copy()
         self.label_u = self.z_obs[self.u]
-        self.K = np.max(self.z_obs)+1
+        self.K = np.max(self.z_obs) + 1
         # GCN weight matrices
         self.W1 = W1
         self.W2 = W2
@@ -93,7 +94,6 @@ class Nettack:
             scores_matrix[n] = scores
         self.cooc_constraint = sp.csr_matrix(scores_matrix - 0.5 * sd[:, None] > 0)
 
-
     def gradient_wrt_x(self, label):
         """
         Compute the gradient of the logit belonging to the class of the input label with respect to the input features.
@@ -132,7 +132,7 @@ class Nettack:
         """
 
         label_u_onehot = np.eye(self.K)[self.label_u]
-        return (logits - 1000*label_u_onehot).argmax()
+        return (logits - 1000 * label_u_onehot).argmax()
 
     def feature_scores(self):
         """
@@ -179,7 +179,7 @@ class Nettack:
         logits = a_hat_uv.dot(XW)
         label_onehot = np.eye(XW.shape[1])[self.label_u]
         best_wrong_class_logits = (logits - 1000 * label_onehot).max(1)
-        logits_for_correct_class = logits[:,self.label_u]
+        logits_for_correct_class = logits[:, self.label_u]
         struct_scores = logits_for_correct_class - best_wrong_class_logits
 
         return struct_scores
@@ -194,7 +194,7 @@ class Nettack:
 
         return self.X_obs.dot(self.W)
 
-    def get_attacker_nodes(self, n=5, add_additional_nodes = False):
+    def get_attacker_nodes(self, n=5, add_additional_nodes=False):
         """
         Determine the influencer nodes to attack node i based on the weights W and the attributes X.
         Parameters
@@ -213,12 +213,12 @@ class Nettack:
             return the additional attacker node indices
         """
 
-        assert n < self.N-1, "number of influencers cannot be >= number of nodes in the graph!"
+        assert n < self.N - 1, "number of influencers cannot be >= number of nodes in the graph!"
 
         neighbors = self.adj_no_selfloops[self.u].nonzero()[1]
         assert self.u not in neighbors
 
-        potential_edges = np.column_stack((np.tile(self.u, len(neighbors)),neighbors)).astype("int32")
+        potential_edges = np.column_stack((np.tile(self.u, len(neighbors)), neighbors)).astype("int32")
 
         # The new A_hat_square_uv values that we would get if we removed the edge from u to each of the neighbors,
         # respectively
@@ -241,7 +241,7 @@ class Nettack:
                 # that are already connected to u.
                 poss_add_infl = np.setdiff1d(np.arange(self.N), neighbors)
                 n_possible_additional = len(poss_add_infl)
-                n_additional_attackers = n-len(neighbors)
+                n_additional_attackers = n - len(neighbors)
                 possible_edges = np.column_stack((np.tile(self.u, n_possible_additional), poss_add_infl))
 
                 # Compute the struct_scores for all possible additional influencers, and choose the one
@@ -283,7 +283,7 @@ class Nettack:
         return a_hat_uv
 
     def attack_surrogate(self, n_perturbations, perturb_structure=True, perturb_features=True,
-                         direct=True, n_influencers=0, delta_cutoff=0.004):
+                         direct=True, n_influencers=0, delta_cutoff=0.004, look_ahead=False, M=5):
         """
         Perform an attack on the surrogate model.
         Parameters
@@ -302,12 +302,14 @@ class Nettack:
             The critical value for the likelihood ratio test of the power law distributions.
              See the Chi square distribution with one degree of freedom. Default value 0.004
              corresponds to a p-value of roughly 0.95.
+        look_ahead: bool, whether to use the greedy look ahead
+        M: int, number of most promising edges to look at when performing the look ahead
         Returns
         -------
         None.
         """
 
-        assert not (direct==False and n_influencers==0), "indirect mode requires at least one influencer node"
+        assert not (direct == False and n_influencers == 0), "indirect mode requires at least one influencer node"
         assert n_perturbations > 0, "need at least one perturbation"
         assert perturb_features or perturb_structure, "either perturb_features or perturb_structure must be true"
 
@@ -330,7 +332,6 @@ class Nettack:
             print("##### Performing {} perturbations #####".format(n_perturbations))
 
         if perturb_structure:
-
             # Setup starting values of the likelihood ratio test.
             degree_sequence_start = self.adj_orig.sum(0).A1
             current_degree_sequence = self.adj.sum(0).A1
@@ -342,36 +343,74 @@ class Nettack:
             alpha_start = compute_alpha(n_start, S_d_start, d_min)
             log_likelihood_orig = compute_log_likelihood(n_start, alpha_start, S_d_start, d_min)
 
+        else:
+            current_degree_sequence = None
+            current_S_d = None
+            current_n = None
+            d_min = None
+            n_start = None
+            S_d_start = None
+            log_likelihood_orig = None
+
         if len(self.influencer_nodes) == 0:
             if not direct:
                 # Choose influencer nodes
                 infls, add_infls = self.get_attacker_nodes(n_influencers, add_additional_nodes=True)
-                self.influencer_nodes= np.concatenate((infls, add_infls)).astype("int")
+                self.influencer_nodes = np.concatenate((infls, add_infls)).astype("int")
                 # Potential edges are all edges from any attacker to any other node, except the respective
                 # attacker itself or the node being attacked.
                 self.potential_edges = np.row_stack([np.column_stack((np.tile(infl, self.N - 2),
-                                                                 np.setdiff1d(np.arange(self.N),
-                                                                              np.array([self.u,infl])))) for infl in
+                                                                      np.setdiff1d(np.arange(self.N),
+                                                                                   np.array([self.u, infl])))) for infl
+                                                     in
                                                      self.influencer_nodes])
                 if self.verbose:
                     print("Influencer nodes: {}".format(self.influencer_nodes))
             else:
                 # direct attack
                 influencers = [self.u]
-                self.potential_edges = np.column_stack((np.tile(self.u, self.N-1), np.setdiff1d(np.arange(self.N), self.u)))
+                self.potential_edges = np.column_stack(
+                    (np.tile(self.u, self.N - 1), np.setdiff1d(np.arange(self.N), self.u)))
                 self.influencer_nodes = np.array(influencers)
         self.potential_edges = self.potential_edges.astype("int32")
+
+        # greedy algorithm from the paper
+        if not look_ahead or perturb_features:
+            self.greedy(n_perturbations, perturb_structure, perturb_features, current_degree_sequence, current_S_d,
+                        current_n, d_min,
+                        n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses)
+        # greedy algorithm with one step look ahead. Only works with structure changes for now, not feature changes.
+        else:
+            self.greedy_lookahead(n_perturbations, M, perturb_structure, perturb_features, current_degree_sequence,
+                                  current_S_d,
+                                  current_n, d_min,
+                                  n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses)
+
+    def reset(self):
+        """
+        Reset Nettack
+        """
+        self.adj = self.adj_orig.copy()
+        self.X_obs = self.X_obs_orig.copy()
+        self.structure_perturbations = []
+        self.feature_perturbations = []
+        self.influencer_nodes = []
+        self.potential_edges = []
+        self.cooc_constraint = None
+
+    def greedy(self, n_perturbations, perturb_structure, perturb_features, current_degree_sequence, current_S_d,
+               current_n, d_min,
+               n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses):
         for _ in range(n_perturbations):
             if self.verbose:
-                print("##### ...{}/{} perturbations ... #####".format(_+1, n_perturbations))
+                print("##### ...{}/{} perturbations ... #####".format(_ + 1, n_perturbations))
             if perturb_structure:
-
                 # Do not consider edges that, if removed, result in singleton edges in the graph.
                 singleton_filter = filter_singletons(self.potential_edges, self.adj)
                 filtered_edges = self.potential_edges[singleton_filter]
 
                 # Update the values for the power law likelihood ratio test.
-                deltas = 2 * (1 - self.adj[tuple(filtered_edges.T)].toarray()[0] )- 1
+                deltas = 2 * (1 - self.adj[tuple(filtered_edges.T)].toarray()[0]) - 1
                 d_edges_old = current_degree_sequence[filtered_edges]
                 d_edges_new = current_degree_sequence[filtered_edges] + deltas[:, None]
                 new_S_d, new_n = update_Sx(current_S_d, current_n, d_edges_old, d_edges_new, d_min)
@@ -409,7 +448,7 @@ class Nettack:
                 else:
                     if self.verbose:
                         print("Feature perturbation: {}".format(best_feature_ix))
-                    change_structure=False
+                    change_structure = False
             elif perturb_structure:
                 change_structure = True
             elif perturb_features:
@@ -437,17 +476,148 @@ class Nettack:
                 self.structure_perturbations.append(())
                 surrogate_losses.append(best_feature_score)
 
-    def reset(self):
-        """
-        Reset Nettack
-        """
-        self.adj = self.adj_orig.copy()
-        self.X_obs = self.X_obs_orig.copy()
-        self.structure_perturbations = []
-        self.feature_perturbations = []
-        self.influencer_nodes = []
-        self.potential_edges = []
-        self.cooc_constraint = None
+    def greedy_lookahead(self, n_perturbations, M, perturb_structure, perturb_features, current_degree_sequence,
+                         current_S_d,
+                         current_n, d_min,
+                         n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses):
+
+        # only allow changes to structure for now
+        assert perturb_structure and not perturb_features
+        if self.verbose:
+            print("Using the greedy look ahead algorithm")
+
+        for _ in range(int(n_perturbations / 2)):
+            if self.verbose:
+                print("##### ...{}/{} perturbations ... #####".format(2 * _ + 1, n_perturbations))
+
+            first_edge, first_score, second_edge, second_score, current_S_d, current_n, add_first, add_second = self.aux_lookahead(
+                True, M, current_degree_sequence,
+                current_S_d, current_n, d_min,
+                n_start, S_d_start,
+                log_likelihood_orig, delta_cutoff,
+                surrogate_losses)
+
+            # modify the graph, update current_S_d, current_n, current_degree_sequence
+            current_degree_sequence[first_edge] += add_first
+            current_degree_sequence[second_edge] += add_second
+
+            self.adj[tuple(first_edge)] = self.adj[tuple(first_edge[::-1])] = 1 - self.adj[tuple(first_edge)]
+            self.adj[tuple(second_edge)] = self.adj[tuple(second_edge[::-1])] = 1 - self.adj[tuple(second_edge)]
+            self.adj_preprocessed = preprocess_graph(self.adj)
+
+            self.structure_perturbations.append(tuple(first_edge))
+            self.feature_perturbations.append(())
+            self.structure_perturbations.append(tuple(second_edge))
+            self.feature_perturbations.append(())
+            surrogate_losses.append(first_score)
+            surrogate_losses.append(second_score)
+
+        #call the normal greedy algo if the number of perturbations is not even
+        if n_perturbations % 2 == 1:
+            self.greedy(1, perturb_structure, perturb_features, current_degree_sequence, current_S_d,
+                        current_n, d_min,
+                        n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses)
+
+    def aux_lookahead(self, look_ahead, M, current_degree_sequence, current_S_d, current_n, d_min,
+                      n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses, first_edge=None,
+                      first_score=None):
+        # Compute scores
+
+        # Do not consider edges that, if removed, result in singleton edges in the graph.
+        singleton_filter = filter_singletons(self.potential_edges, self.adj)
+        filtered_edges = self.potential_edges[singleton_filter]
+
+        # Update the values for the power law likelihood ratio test.
+        deltas = 2 * (1 - self.adj[tuple(filtered_edges.T)].toarray()[0]) - 1
+        d_edges_old = current_degree_sequence[filtered_edges]
+        d_edges_new = current_degree_sequence[filtered_edges] + deltas[:, None]
+        new_S_d, new_n = update_Sx(current_S_d, current_n, d_edges_old, d_edges_new, d_min)
+        new_alphas = compute_alpha(new_n, new_S_d, d_min)
+        new_ll = compute_log_likelihood(new_n, new_alphas, new_S_d, d_min)
+        alphas_combined = compute_alpha(new_n + n_start, new_S_d + S_d_start, d_min)
+        new_ll_combined = compute_log_likelihood(new_n + n_start, alphas_combined, new_S_d + S_d_start, d_min)
+        new_ratios = -2 * new_ll_combined + 2 * (new_ll + log_likelihood_orig)
+
+        # Do not consider edges that, if added/removed, would lead to a violation of the
+        # likelihood ration Chi_square cutoff value.
+        powerlaw_filter = filter_chisquare(new_ratios, delta_cutoff)
+        filtered_edges_final = filtered_edges[powerlaw_filter]
+
+        # Compute new entries in A_hat_square_uv
+        a_hat_uv_new = self.compute_new_a_hat_uv(filtered_edges_final)
+        # Compute the struct scores for each potential edge
+        struct_scores = self.struct_score(a_hat_uv_new, self.compute_XW())
+
+        if look_ahead:
+            struct_scores = np.array(struct_scores)[:,0]
+            order = np.argsort(struct_scores)
+
+            best_edges_ix = order[:M]
+            best_edges_score = struct_scores[best_edges_ix]
+            best_edges = filtered_edges_final[best_edges_ix]
+
+            # best score for the sequence of modifications
+            b_s = np.Inf
+            # save the current configuration
+            old_config = [current_degree_sequence.copy(), current_S_d, current_n]
+
+            for i in range(len(best_edges_ix)):
+
+                # perform edge perturbation
+
+                self.adj[tuple(best_edges[i])] = self.adj[tuple(best_edges[i][::-1])] = 1 - self.adj[
+                    tuple(best_edges[i])]
+                self.adj_preprocessed = preprocess_graph(self.adj)
+
+                # Update likelihood ratio test values
+                current_S_d = new_S_d[powerlaw_filter][best_edges_ix[i]]
+                current_n = new_n[powerlaw_filter][best_edges_ix[i]]
+                #bug here too many indices
+                current_degree_sequence[tuple(best_edges[i])] += deltas[powerlaw_filter][best_edges_ix[i]]
+
+                # call greedy
+                first_edge, first_score, second_edge, second_score, current_S_d, current_n, add_to_deltas = self.aux_lookahead(
+                    False, M,
+                    current_degree_sequence,
+                    current_S_d, current_n, d_min,
+                    n_start, S_d_start,
+                    log_likelihood_orig,
+                    delta_cutoff, surrogate_losses,
+                    tuple(best_edges[i]),
+                    best_edges_score[i])
+
+                # update best combination
+                if first_score + second_score < b_s:
+                    b_s = first_score + second_score
+                    b_f_e = first_edge
+                    b_s_e = second_edge
+                    f_s = first_score
+                    s_s = second_score
+                    c_s_d = current_S_d
+                    c_n = current_n
+                    add_first = deltas[powerlaw_filter][best_edges_ix[i]]
+                    add_second = add_to_deltas
+
+                # reset configuration. Another copy to be sure
+                current_degree_sequence = old_config[0].copy()
+                self.adj[tuple(best_edges[i])] = self.adj[tuple(best_edges[i][::-1])] = 1 - self.adj[
+                    tuple(best_edges[i])]
+                self.adj_preprocessed = preprocess_graph(self.adj)
+
+            return b_f_e, f_s, b_s_e, s_s, c_s_d, c_n, add_first, add_second
+
+        else:
+            # compute best score but don't apply modif
+            second_edge_ix = struct_scores.argmin()
+            second_score = struct_scores.min()
+            second_edge = filtered_edges_final[second_edge_ix]
+
+            # Update likelihood ratio test values
+            current_S_d = new_S_d[powerlaw_filter][second_edge_ix]
+            current_n = new_n[powerlaw_filter][second_edge_ix]
+
+            return first_edge, first_score, second_edge, second_score, current_S_d, current_n, deltas[powerlaw_filter][
+                second_edge_ix]
 
 
 @jit(nopython=True)
@@ -459,6 +629,7 @@ def connected_after(u, v, connected_before, delta):
             return True
     else:
         return connected_before
+
 
 @jit(nopython=True)
 def compute_new_a_hat_uv(edge_ixs, node_nb_ixs, edges_set, twohop_ixs, values_before, degs, potential_edges, u):
@@ -554,6 +725,7 @@ def compute_new_a_hat_uv(edge_ixs, node_nb_ixs, edges_set, twohop_ixs, values_be
 
     return return_ixs, return_values
 
+
 def compute_alpha(n, S_d, d_min):
     """
     Approximate the alpha of a power law distribution.
@@ -628,6 +800,7 @@ def compute_log_likelihood(n, alpha, S_d, d_min):
 
     return n * np.log(alpha) + n * alpha * np.log(d_min) + (alpha + 1) * S_d
 
+
 def filter_singletons(edges, adj):
     """
     Filter edges that, if removed, would turn one or more nodes into singleton nodes.
@@ -644,16 +817,17 @@ def filter_singletons(edges, adj):
         the index  generates singleton edges, and should thus be avoided.
     """
 
-    degs = np.squeeze(np.array(np.sum(adj,0)))
+    degs = np.squeeze(np.array(np.sum(adj, 0)))
     existing_edges = np.squeeze(np.array(adj.tocsr()[tuple(edges.T)]))
     if existing_edges.size > 0:
-        edge_degrees = degs[np.array(edges)] + 2*(1-existing_edges[:,None]) - 1
+        edge_degrees = degs[np.array(edges)] + 2 * (1 - existing_edges[:, None]) - 1
     else:
         edge_degrees = degs[np.array(edges)] + 1
 
     zeros = edge_degrees == 0
     zeros_sum = zeros.sum(1)
     return zeros_sum == 0
+
 
 def filter_chisquare(ll_ratios, cutoff):
     return ll_ratios < cutoff
