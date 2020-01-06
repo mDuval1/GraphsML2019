@@ -176,8 +176,8 @@ class GCN_Model():
         Used at the moment for the function eval_class. Can be used to produce
         only prediction probabilities.
         """
-        if name is not None:
-            self.gcn.load_state_dict(torch.load(self.path + f"{name}.pth"))
+        # if name is not None:
+            # self.gcn.load_state_dict(torch.load(self.path + f"{name}.pth"))
         if not train:
             self.gcn.training = False
             with torch.no_grad():
@@ -240,7 +240,7 @@ class GCN_Model():
                 best_performance = perf_sum
                 best_it = it
                 patience = early_stopping
-                torch.save(self.gcn.state_dict(), self.path + "weights.pth")
+                # torch.save(self.gcn.state_dict(), self.path + "weights.pth")
                 if debug:
                     print(f'New best performance : {perf_sum:.3f}')
             else:

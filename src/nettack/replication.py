@@ -34,7 +34,8 @@ class Evaluater:
         # For the algorithm to work, we have to consider a connected graph.
         lcc = largest_connected_components(_A_obs)
         _A_obs = _A_obs[lcc][:,lcc]
-        _X_obs = _X_obs[lcc].astype('float32')
+        if _X_obs is not None:
+            _X_obs = _X_obs[lcc].astype('float32')
         _z_obs = _z_obs[lcc]
                 
         assert np.abs(_A_obs - _A_obs.T).sum() == 0, "Input graph is not symmetric"
@@ -44,7 +45,8 @@ class Evaluater:
         self._A_obs = _A_obs
         self._X_obs = _X_obs
         self.A = sparse_numpy2sparse_torch(_A_obs)
-        self.X = sparse_numpy2sparse_torch(_X_obs)
+        if _X_obs is not None:
+            self.X = sparse_numpy2sparse_torch(_X_obs)
         self.N = _A_obs.shape[0]
         self.K = _z_obs.max()+1
         self.Z = _z_obs
