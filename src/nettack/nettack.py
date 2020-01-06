@@ -512,7 +512,7 @@ class Nettack:
             surrogate_losses.append(first_score)
             surrogate_losses.append(second_score)
 
-        #call the normal greedy algo if the number of perturbations is not even
+        # call the normal greedy algo if the number of perturbations is not even
         if n_perturbations % 2 == 1:
             self.greedy(1, perturb_structure, perturb_features, current_degree_sequence, current_S_d,
                         current_n, d_min,
@@ -549,7 +549,8 @@ class Nettack:
         struct_scores = self.struct_score(a_hat_uv_new, self.compute_XW())
 
         if look_ahead:
-            struct_scores = np.array(struct_scores)[:,0]
+
+            struct_scores = np.array(struct_scores)[:, 0]
             order = np.argsort(struct_scores)
 
             best_edges_ix = order[:M]
@@ -572,8 +573,8 @@ class Nettack:
                 # Update likelihood ratio test values
                 current_S_d = new_S_d[powerlaw_filter][best_edges_ix[i]]
                 current_n = new_n[powerlaw_filter][best_edges_ix[i]]
-                #bug here too many indices
-                current_degree_sequence[tuple(best_edges[i])] += deltas[powerlaw_filter][best_edges_ix[i]]
+
+                current_degree_sequence[best_edges[i]] += deltas[powerlaw_filter][best_edges_ix[i]]
 
                 # call greedy
                 first_edge, first_score, second_edge, second_score, current_S_d, current_n, add_to_deltas = self.aux_lookahead(
@@ -583,7 +584,7 @@ class Nettack:
                     n_start, S_d_start,
                     log_likelihood_orig,
                     delta_cutoff, surrogate_losses,
-                    tuple(best_edges[i]),
+                    best_edges[i],
                     best_edges_score[i])
 
                 # update best combination
