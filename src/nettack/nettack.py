@@ -375,7 +375,7 @@ class Nettack:
         self.potential_edges = self.potential_edges.astype("int32")
 
         # greedy algorithm from the paper
-        if not look_ahead or perturb_features:
+        if not look_ahead:
             self.greedy(n_perturbations, perturb_structure, perturb_features, current_degree_sequence, current_S_d,
                         current_n, d_min,
                         n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses)
@@ -482,7 +482,7 @@ class Nettack:
                          n_start, S_d_start, log_likelihood_orig, delta_cutoff, surrogate_losses):
 
         # only allow changes to structure for now
-        assert perturb_structure and not perturb_features
+
         if self.verbose:
             print("Using the greedy look ahead algorithm")
 

@@ -21,11 +21,13 @@ def sparse_numpy2sparse_torch(x):
     shape = x.shape
     return torch.sparse.FloatTensor(i, v, torch.Size(shape))
 
+
 class Evaluater:
-    
-    def __init__(self):
-        pass
-    
+
+    def __init__(self, look_ahead=False, M=15):
+        self.look_ahead = look_ahead
+        self.M = M
+
     def load_dataset(self, path):
         _A_obs, _X_obs, _z_obs = load_npz(path)
         # Normalizing Adjacency matrix
@@ -33,30 +35,30 @@ class Evaluater:
         _A_obs[_A_obs > 1] = 1
         # For the algorithm to work, we have to consider a connected graph.
         lcc = largest_connected_components(_A_obs)
-        _A_obs = _A_obs[lcc][:,lcc]
+        _A_obs = _A_obs[lcc][:, lcc]
         if _X_obs is not None:
             _X_obs = _X_obs[lcc].astype('float32')
         _z_obs = _z_obs[lcc]
-                
+
         assert np.abs(_A_obs - _A_obs.T).sum() == 0, "Input graph is not symmetric"
         assert _A_obs.max() == 1 and len(np.unique(_A_obs[_A_obs.nonzero()].A1)) == 1, "Graph must be unweighted"
         assert _A_obs.sum(0).A1.min() > 0, "Graph contains singleton nodes"
-        
+
         self._A_obs = _A_obs
         self._X_obs = _X_obs
         self.A = sparse_numpy2sparse_torch(_A_obs)
         if _X_obs is not None:
             self.X = sparse_numpy2sparse_torch(_X_obs)
         self.N = _A_obs.shape[0]
-        self.K = _z_obs.max()+1
+        self.K = _z_obs.max() + 1
         self.Z = _z_obs
         self.Ztorch = torch.tensor(_z_obs.astype(np.int64))
         # Normalizing adjacency matrix
         self.An = sparse_numpy2sparse_torch(preprocess_graph(_A_obs))
         self.degrees = _A_obs.sum(0).A1
-        
+
     def create_splits(self):
-        
+
         unlabeled_share = 0.8
         val_share = 0.1
         train_share = 1 - unlabeled_share - val_share
@@ -71,7 +73,7 @@ class Evaluater:
         print(f'Number of training node : {len(split_train)}')
         print(f'Number of validation nodes : {len(split_val)}')
         print(f'Number of unlabeled (unknown) nodes : {len(split_unlabeled)}')
-        
+
     def train_model(self, surrogate=False, with_perturb=False, disp=True, debug=False):
         sizes = [16, self.K]
         name = "surrogate" if surrogate else ("pertubed" if with_perturb else "clean")
@@ -80,7 +82,7 @@ class Evaluater:
         self.nn = GCN(sizes, A, X, with_relu=(not surrogate), name=name)
         self.model = GCN_Model(self.nn, lr=1e-2)
         self.model.train(self.split_train, self.split_val, self.Ztorch, print_info=disp, debug=debug)
-        
+
         # Computing logits for every node
         self.model._compute_loss_and_backprop(np.arange(self.N), self.Ztorch, backward=False)
         self.logits = self.model.logit_nodes.detach().cpu().numpy()
@@ -89,7 +91,8 @@ class Evaluater:
         if disp:
             print(f'Validation accuracy : {(self.Z[self.split_val] == self.preds[self.split_val]).mean():.2%}')
             print(f'Train accuracy : {(self.Z[self.split_train] == self.preds[self.split_train]).mean():.2%}')
-            print(f'Unlabeled accuracy : {(self.Z[self.split_unlabeled] == self.preds[self.split_unlabeled]).mean():.2%}')
+            print(
+                f'Unlabeled accuracy : {(self.Z[self.split_unlabeled] == self.preds[self.split_unlabeled]).mean():.2%}')
         if surrogate:
             self.W1 = self.model.gcn.gc1.weight
             self.W2 = self.model.gcn.gc2.weight
@@ -99,7 +102,7 @@ class Evaluater:
                                       (probas_surr_sorted == self.Z[:, None]).argmin(axis=1)]
         self.margins = (self.probas[np.arange(self.N), self.Z] -
                         self.probas[np.arange(self.N), second_l])
-        
+
     def attack(self, u, verbose=False, n_perturbations=None, direct_attack=True,
                perturb_features=True, perturb_structure=True):
         self.nettack = Nettack(self._A_obs, self._X_obs, self.Z, self.W1, self.W2, u, verbose=verbose)
@@ -108,30 +111,32 @@ class Evaluater:
             n_perturbations = int(self.degrees[u])
         n_influencers = 1 if direct_attack else 5
         self.nettack.attack_surrogate(n_perturbations,
-                         perturb_structure=perturb_structure,
-                         perturb_features=perturb_features,
-                         direct=direct_attack,
-                         n_influencers=n_influencers)
+                                      perturb_structure=perturb_structure,
+                                      perturb_features=perturb_features,
+                                      direct=direct_attack,
+                                      n_influencers=n_influencers,
+                                      look_ahead=self.look_ahead,
+                                      M=self.M)
 
     def _produce_margin(self, data):
         n, id_, direct, features, structure = data
         self.attack(u=id_, verbose=False, direct_attack=direct, n_perturbations=int(self.degrees[id_] + 2),
-              perturb_features=features, perturb_structure=structure)
+                    perturb_features=features, perturb_structure=structure)
         self.train_model(surrogate=False, with_perturb=True, disp=False)
         margin = self.margins[id_]
         return (n, id_, margin)
 
     def produce_margins(self, ids, direct=True, n_repeats=10, features=True,
-                    structure=True, nb_process=5):
+                        structure=True, nb_process=5):
         dict_ids_i = dict(zip(ids, list(range(len(ids)))))
         data = [(n, id_, direct, features, structure)
                 for n in range(n_repeats) for id_ in ids]
         if nb_process > 1:
             # raise ValueError('Multiprocessing does not work')
             with mp.Pool(processes=nb_process) as pool:
-                raw_results = tqdm.tqdm_notebook(pool.map(self._produce_margin, data), total=len(ids)*n_repeats)
+                raw_results = tqdm.tqdm_notebook(pool.map(self._produce_margin, data), total=len(ids) * n_repeats)
         else:
-            raw_results = list(tqdm.tqdm_notebook(map(self._produce_margin, data), total=len(ids)*n_repeats))
+            raw_results = list(tqdm.tqdm_notebook(map(self._produce_margin, data), total=len(ids) * n_repeats))
         data = np.zeros((n_repeats, len(ids)))
         for x in raw_results:
             n, id_, m = x
@@ -155,17 +160,15 @@ class Evaluater:
 #     with mp.Pool(processes=nb_process) as pool:
 #         raw_results = tqdm.tqdm_notebook(pool.map(produce_margin, data), total=len(ids)*n_repeats)
 #     return raw_results
-    # margins = []
-    # for i in range(n_repeats):
-    #     margins_i = []
-    #     for id_ in ids:
-    #         Ev.attack(u=i, verbose=False, direct_attack=direct, n_perturbations=int(Ev.degrees[i] + 2),
-    #                   perturb_features=features, perturb_structure=structure)
-    #         Ev.train_model(surrogate=False, with_perturb=True, disp=False)
-    #         pbar.update(1)
-    #         margins_i.append(Ev.margins[id_])
-    #     margins.append(margins_i)
-    # pbar.close()
-    # return np.array(margins)
-
-
+# margins = []
+# for i in range(n_repeats):
+#     margins_i = []
+#     for id_ in ids:
+#         Ev.attack(u=i, verbose=False, direct_attack=direct, n_perturbations=int(Ev.degrees[i] + 2),
+#                   perturb_features=features, perturb_structure=structure)
+#         Ev.train_model(surrogate=False, with_perturb=True, disp=False)
+#         pbar.update(1)
+#         margins_i.append(Ev.margins[id_])
+#     margins.append(margins_i)
+# pbar.close()
+# return np.array(margins)
