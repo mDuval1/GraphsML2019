@@ -187,7 +187,7 @@ class GCN_Model():
             logit_nodes = self.gcn(node_ids)
         return F.softmax(logit_nodes, dim=1)
 
-    def train(self, split_train, split_val, Z_obs, patience=30, n_iters=200, print_info=True, debug=False):
+    def train(self, split_train, split_val, Z_obs, patience=30, n_iters=100, print_info=True, debug=False):
         """
         Train the GCN model on the provided data.
         Parameters

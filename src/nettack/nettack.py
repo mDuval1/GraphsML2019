@@ -560,7 +560,7 @@ class Nettack:
             # best score for the sequence of modifications
             b_s = np.Inf
             # save the current configuration
-            old_config = [current_degree_sequence.copy(), current_S_d, current_n]
+            old_config = [current_degree_sequence.copy()]#, self.adj_preprocessed.copy()]
 
             for i in range(len(best_edges_ix)):
 
@@ -599,11 +599,13 @@ class Nettack:
                     add_first = deltas[powerlaw_filter][best_edges_ix[i]]
                     add_second = add_to_deltas
 
-                # reset configuration. Another copy to be sure
-                current_degree_sequence = old_config[0].copy()
+                # reset configuration
                 self.adj[tuple(best_edges[i])] = self.adj[tuple(best_edges[i][::-1])] = 1 - self.adj[
                     tuple(best_edges[i])]
                 self.adj_preprocessed = preprocess_graph(self.adj)
+                #utile?
+                #self.adj_preprocessed = old_config[1].copy()
+                current_degree_sequence = old_config[0].copy()
 
             return b_f_e, f_s, b_s_e, s_s, c_s_d, c_n, add_first, add_second
 
@@ -672,7 +674,7 @@ def compute_new_a_hat_uv(edge_ixs, node_nb_ixs, edges_set, twohop_ixs, values_be
     return_values = []
 
     for ix in range(len(potential_edges)):
-        edge = potential_edges[ix]
+        edge = potential_edges[ix].astype(np.int32)
         edge_set = set(edge)
         degs_new = degs.copy()
         delta = -2 * ((edge[0], edge[1]) in edges_set) + 1
